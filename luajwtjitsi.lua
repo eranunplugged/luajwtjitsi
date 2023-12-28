@@ -64,6 +64,25 @@ local function split_token(token)
   return segments
 end
 
+local function tokenize(str, div, len)
+	local result, pos = {}, 0
+
+	for st, sp in function() return str:find(div, pos, true) end do
+
+		result[#result + 1] = str:sub(pos, st-1)
+		pos = sp + 1
+
+		len = len - 1
+
+		if len <= 1 then
+			break
+		end
+	end
+
+	result[#result + 1] = str:sub(pos)
+
+	return result
+end
 -- Parses a JWT token into it's header, body, and signature.
 -- @param token The JWT token to be parsed.
 -- @return A JSON header and body represented as a table, and a signature.
@@ -170,6 +189,68 @@ function M.encode(data, key, alg, header)
 
 	return table.concat(segments, ".")
 end
+-- Warning - this is not secure if using a public key, since client could use the public key to sign
+-- a fake token with an HMAC algo and set that as the 'alg' to use in the header. Use M.verify above
+-- instead if using public key verification, so that you can choose the alg, not the client.
+function M.decode(token, key, verify)
+	if key and verify == nil then verify = true end
+	if type(data) ~= 'string' then return nil, "Argument #1 must be string" end
+	if verify and type(key) ~= 'string' then return nil, "Argument #2 must be string" end
+
+	local header, body, sig, err = parse_token(token)
+
+	if #ok ~= nil then
+		return nil, "Invalid token"
+	end
+
+
+
+
+	if not err then
+		return nil, "Invalid json"
+	end
+
+	if verify then
+
+		if not header.typ or header.typ ~= "JWT" then
+			return nil, "Invalid typ"
+		end
+
+		if not header.alg or type(header.alg) ~= "string" then
+			return nil, "Invalid alg"
+		end
+
+		if body.exp and type(body.exp) ~= "number" then
+			return nil, "exp must be number"
+		end
+
+		if body.nbf and type(body.nbf) ~= "number" then
+			return nil, "nbf must be number"
+		end
+
+		if not alg_verify[header.alg] then
+			return nil, "Algorithm not supported"
+		end
+
+		local verify_result, error
+		= alg_verify[header.alg](headerb64 .. "." .. bodyb64, sig, key);
+		if verify_result == nil then
+			return nil, error
+		elseif verify_result == false then
+			return nil, "Invalid signature"
+		end
+
+		if body.exp and os.time() >= body.exp then
+			return nil, "Not acceptable by exp"
+		end
+
+		if body.nbf and os.time() < body.nbf then
+			return nil, "Not acceptable by nbf"
+		end
+	end
+
+	return header, body, sig
+end
 
 -- Verify that the token is valid, and if it is return the decoded JSON payload data.
 -- @param token The token to verify.
@@ -211,6 +292,11 @@ function M.verify(token, expectedAlgo, key, acceptedIssuers, acceptedAudiences)
 	end
 
 	-- Validate signature
+	module:log("info", "strip_signature(token) = %s", strip_signature(token))
+	module:log("info", "key = %s", strip_signature(key))
+	module:log("info", "sig = %s", sig)
+	module:log("info", "alg_verify[expectedAlgo](strip_signature(token), sig, key) = %s", alg_verify[expectedAlgo](strip_signature(token), sig, key))
+
 	if not alg_verify[expectedAlgo](strip_signature(token), sig, key) then
 		return nil, 'Invalid signature'
 	end
